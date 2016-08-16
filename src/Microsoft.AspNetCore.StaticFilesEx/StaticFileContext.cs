@@ -20,13 +20,13 @@ using Microsoft.Net.Http.Headers;
 
 namespace Microsoft.AspNetCore.StaticFiles
 {
-    internal struct StaticFileContext
+    public class StaticFileContext
     {
-        private readonly HttpContext _context;
+		public HttpContext HttpContext { get; }
         private readonly StaticFileOptions _options;
         private readonly PathString _matchUrl;
-        private readonly HttpRequest _request;
-        private readonly HttpResponse _response;
+		private readonly HttpRequest _request;
+		private readonly HttpResponse _response;
         private readonly ILogger _logger;
         private readonly IFileProvider _fileProvider;
         private readonly IContentTypeProvider _contentTypeProvider;
@@ -50,13 +50,13 @@ namespace Microsoft.AspNetCore.StaticFiles
 
         private IList<RangeItemHeaderValue> _ranges;
 
-        public StaticFileContext(HttpContext context, StaticFileOptions options, PathString matchUrl, ILogger logger, IFileProvider fileProvider, IContentTypeProvider contentTypeProvider)
+        public StaticFileContext(HttpContext httpContext, StaticFileOptions options, PathString matchUrl, ILogger logger, IFileProvider fileProvider, IContentTypeProvider contentTypeProvider)
         {
-            _context = context;
+            HttpContext = httpContext;
             _options = options;
             _matchUrl = matchUrl;
-            _request = context.Request;
-            _response = context.Response;
+            _request = httpContext.Request;
+            _response = httpContext.Response;
             _logger = logger;
             _requestHeaders = _request.GetTypedHeaders();
             _responseHeaders = _response.GetTypedHeaders();
@@ -118,10 +118,10 @@ namespace Microsoft.AspNetCore.StaticFiles
         // Check if the URL matches any expected paths
         public bool ValidatePath()
         {
-            return Helpers.TryMatchPath(_context, _matchUrl, forDirectory: false, subpath: out _subPath);
+            return Helpers.TryMatchPath(HttpContext, _matchUrl, forDirectory: false, subpath: out _subPath);
         }
 
-        public bool LookupContentType()
+        public virtual bool LookupContentType()
         {
             if (_contentTypeProvider.TryGetContentType(_subPath.Value, out _contentType))
             {
@@ -137,7 +137,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             return false;
         }
 
-        public bool LookupFileInfo()
+        public virtual bool LookupFileInfo()
         {
             _fileInfo = _fileProvider.GetFileInfo(_subPath.Value);
             if (_fileInfo.Exists)
@@ -154,7 +154,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             return _fileInfo.Exists;
         }
 
-        public void ComprehendRequestHeaders()
+        public virtual void ComprehendRequestHeaders()
         {
             ComputeIfMatch();
 
@@ -163,7 +163,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             ComputeRange();
         }
 
-        private void ComputeIfMatch()
+        protected virtual void ComputeIfMatch()
         {
             // 14.24 If-Match
             var ifMatch = _requestHeaders.IfMatch;
@@ -196,7 +196,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             }
         }
 
-        private void ComputeIfModifiedSince()
+		protected virtual void ComputeIfModifiedSince()
         {
             var now = DateTimeOffset.UtcNow;
 
@@ -217,7 +217,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             }
         }
 
-        private void ComputeRange()
+		protected virtual void ComputeRange()
         {
             // 14.35 Range
             // http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-24
@@ -285,7 +285,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             _ranges = RangeHelpers.NormalizeRanges(rangeHeader.Ranges, _length);
         }
 
-        public void ApplyResponseHeaders(int statusCode)
+		protected virtual void ApplyResponseHeaders(int statusCode)
         {
             _response.StatusCode = statusCode;
             if (statusCode < 400)
@@ -309,12 +309,12 @@ namespace Microsoft.AspNetCore.StaticFiles
             }
             _options.OnPrepareResponse(new StaticFileResponseContext()
             {
-                Context = _context,
+                Context = HttpContext,
                 File = _fileInfo,
             });
         }
 
-        public PreconditionState GetPreconditionState()
+        internal PreconditionState GetPreconditionState()
         {
             return GetMaxPreconditionState(_ifMatchState, _ifNoneMatchState,
                 _ifModifiedSinceState, _ifUnmodifiedSinceState);
@@ -333,7 +333,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             return max;
         }
 
-        public Task SendStatusAsync(int statusCode)
+        public virtual Task SendStatusAsync(int statusCode)
         {
             ApplyResponseHeaders(statusCode);
 
@@ -341,31 +341,34 @@ namespace Microsoft.AspNetCore.StaticFiles
             return Constants.CompletedTask;
         }
 
-        public async Task SendAsync()
+        public virtual void SendOk()
         {
-            ApplyResponseHeaders(Constants.Status200Ok);
-
-            string physicalPath = _fileInfo.PhysicalPath;
-            var sendFile = _context.Features.Get<IHttpSendFileFeature>();
-            if (sendFile != null && !string.IsNullOrEmpty(physicalPath))
-            {
-                await sendFile.SendFileAsync(physicalPath, 0, _length, _context.RequestAborted);
-                return;
-            }
-
-            Stream readStream = _fileInfo.CreateReadStream();
-            try
-            {
-                await StreamCopyOperation.CopyToAsync(readStream, _response.Body, _length, _context.RequestAborted);
-            }
-            finally
-            {
-                readStream.Dispose();
-            }
+	        ApplyResponseHeaders(Constants.Status200Ok);
         }
 
-        // When there is only a single range the bytes are sent directly in the body.
-        internal async Task SendRangeAsync()
+	    public virtual async Task SendContentsAsync()
+	    {
+		    var physicalPath = _fileInfo.PhysicalPath;
+		    var sendFile = HttpContext.Features.Get<IHttpSendFileFeature>();
+		    if (sendFile != null && !string.IsNullOrEmpty(physicalPath))
+		    {
+			    await sendFile.SendFileAsync(physicalPath, 0, _length, HttpContext.RequestAborted);
+			    return;
+		    }
+
+		    var readStream = _fileInfo.CreateReadStream();
+		    try
+		    {
+			    await StreamCopyOperation.CopyToAsync(readStream, _response.Body, _length, HttpContext.RequestAborted);
+		    }
+		    finally
+		    {
+			    readStream.Dispose();
+		    }
+	    }
+
+	    // When there is only a single range the bytes are sent directly in the body.
+        public virtual async Task SendRangeAsync()
         {
             bool rangeNotSatisfiable = false;
             if (_ranges.Count == 0)
@@ -394,11 +397,11 @@ namespace Microsoft.AspNetCore.StaticFiles
             ApplyResponseHeaders(Constants.Status206PartialContent);
 
             string physicalPath = _fileInfo.PhysicalPath;
-            var sendFile = _context.Features.Get<IHttpSendFileFeature>();
+            var sendFile = HttpContext.Features.Get<IHttpSendFileFeature>();
             if (sendFile != null && !string.IsNullOrEmpty(physicalPath))
             {
                 _logger.LogSendingFileRange(_response.Headers[HeaderNames.ContentRange], physicalPath);
-                await sendFile.SendFileAsync(physicalPath, start, length, _context.RequestAborted);
+                await sendFile.SendFileAsync(physicalPath, start, length, HttpContext.RequestAborted);
                 return;
             }
 
@@ -407,7 +410,7 @@ namespace Microsoft.AspNetCore.StaticFiles
             {
                 readStream.Seek(start, SeekOrigin.Begin); // TODO: What if !CanSeek?
                 _logger.LogCopyingFileRange(_response.Headers[HeaderNames.ContentRange], SubPath);
-                await StreamCopyOperation.CopyToAsync(readStream, _response.Body, length, _context.RequestAborted);
+                await StreamCopyOperation.CopyToAsync(readStream, _response.Body, length, HttpContext.RequestAborted);
             }
             finally
             {

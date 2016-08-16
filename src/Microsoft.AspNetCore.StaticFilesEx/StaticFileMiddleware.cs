@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 
 namespace Microsoft.AspNetCore.StaticFiles
 {
-    /// <summary>
+	/// <summary>
     /// Enables serving static files for a given request path
     /// </summary>
     public class StaticFileMiddleware
@@ -25,14 +25,14 @@ namespace Microsoft.AspNetCore.StaticFiles
         private readonly IFileProvider _fileProvider;
         private readonly IContentTypeProvider _contentTypeProvider;
 
-        /// <summary>
-        /// Creates a new instance of the StaticFileMiddleware.
-        /// </summary>
-        /// <param name="next">The next middleware in the pipeline.</param>
-        /// <param name="hostingEnv">The <see cref="IHostingEnvironment"/> used by this middleware.</param>
-        /// <param name="options">The configuration options.</param>
-        /// <param name="loggerFactory">An <see cref="ILoggerFactory"/> instance used to create loggers.</param>
-        public StaticFileMiddleware(RequestDelegate next, IHostingEnvironment hostingEnv, IOptions<StaticFileOptions> options, ILoggerFactory loggerFactory)
+		/// <summary>
+		/// Creates a new instance of the StaticFileMiddleware.
+		/// </summary>
+		/// <param name="next">The next middleware in the pipeline.</param>
+		/// <param name="hostingEnv">The <see cref="IHostingEnvironment"/> used by this middleware.</param>
+		/// <param name="options">The configuration options.</param>
+		/// <param name="loggerFactory">An <see cref="ILoggerFactory"/> instance used to create loggers.</param>
+		public StaticFileMiddleware(RequestDelegate next, IHostingEnvironment hostingEnv, IOptions<StaticFileOptions> options, ILoggerFactory loggerFactory)
         {
             if (next == null)
             {
@@ -69,7 +69,7 @@ namespace Microsoft.AspNetCore.StaticFiles
         /// <returns></returns>
         public Task Invoke(HttpContext context)
         {
-            var fileContext = new StaticFileContext(context, _options, _matchUrl, _logger, _fileProvider, _contentTypeProvider);
+            var fileContext = ResolveStaticFileContext(context);
           
             if (!fileContext.ValidateMethod())
             {
@@ -106,24 +106,57 @@ namespace Microsoft.AspNetCore.StaticFiles
                         }
                         
                         _logger.LogFileServed(fileContext.SubPath, fileContext.PhysicalPath);
-                        return fileContext.SendAsync();
+                        SendOk(fileContext);
+						return SendContentsAsync(fileContext);
 
-                    case StaticFileContext.PreconditionState.NotModified:
+					case StaticFileContext.PreconditionState.NotModified:
                         _logger.LogPathNotModified(fileContext.SubPath);
-                        return fileContext.SendStatusAsync(Constants.Status304NotModified);
+                        return SendNotModifiedAsync(fileContext);
 
                     case StaticFileContext.PreconditionState.PreconditionFailed:
                         _logger.LogPreconditionFailed(fileContext.SubPath);
-                        return fileContext.SendStatusAsync(Constants.Status412PreconditionFailed);
+                        return SendPreconditionFailedAsync(fileContext);
 
                     default:
-                        var exception = new NotImplementedException(fileContext.GetPreconditionState().ToString());
-                        Debug.Fail(exception.ToString());
-                        throw exception;
+                        OnNotImplemented(fileContext);
+		                break;
                 }
             }
 
             return _next(context);
         }
+
+		protected virtual Task SendContentsAsync(StaticFileContext fileContext)
+		{
+			return fileContext.SendContentsAsync();
+		}
+
+		protected virtual void SendOk(StaticFileContext fileContext)
+		{
+			fileContext.SendOk();
+		}
+
+		protected virtual void OnNotImplemented(StaticFileContext fileContext)
+		{
+			var exception = new NotImplementedException(fileContext.GetPreconditionState().ToString());
+			Debug.Fail(exception.ToString());
+			throw exception;
+		}
+
+		protected virtual Task SendPreconditionFailedAsync(StaticFileContext fileContext)
+		{
+			return fileContext.SendStatusAsync(Constants.Status412PreconditionFailed);
+		}
+
+		protected virtual Task SendNotModifiedAsync(StaticFileContext fileContext)
+		{
+			return fileContext.SendStatusAsync(Constants.Status304NotModified);
+		}
+
+		protected virtual StaticFileContext ResolveStaticFileContext(HttpContext context)
+		{
+			var fileContext = new StaticFileContext(context, _options, _matchUrl, _logger, _fileProvider, _contentTypeProvider);
+			return fileContext;
+		}
     }
 }

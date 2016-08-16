@@ -1,5 +1,6 @@
 {
-  "version": "1.0.0-*",
+  "version": "1.0.0.1",
+  "title": "Microsoft.AspNetCore.StaticFilesEx",
   "buildOptions": {
     "warningsAsErrors": true,
     "keyFile": "../../tools/Key.snk",
@@ -12,7 +13,7 @@
   "packOptions": {
     "repository": {
       "type": "git",
-      "url": "git://github.com/aspnet/staticfiles"
+      "url": "git://github.com/joshcomley/staticfiles"
     },
     "tags": [
       "aspnetcore",
